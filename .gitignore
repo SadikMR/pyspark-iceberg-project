@@ -1,0 +1,83 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+.env.*
+
+# ==========================
+# VS Code
+# ==========================
+.vscode/
+
+# ==========================
+# IntelliJ / PyCharm
+# ==========================
+.idea/
+
+# ==========================
+# macOS
+# ==========================
+.DS_Store
+
+# ==========================
+# Linux
+# ==========================
+*~
+
+# ==========================
+# Logs
+# ==========================
+*.log
+
+# ==========================
+# Spark
+# ==========================
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Local Spark event logs (optional)
+spark-events/
+
+# ==========================
+# Iceberg Warehouse
+# ==========================
+data/warehouse/
+
+# If using another warehouse location
+warehouse/
+
+# ==========================
+# Temporary Files
+# ==========================
+tmp/
+temp/
+
+# ==========================
+# Jupyter
+# ==========================
+.ipynb_checkpoints/
+
+# ==========================
+# Build / Distribution
+# ==========================
+build/
+dist/
