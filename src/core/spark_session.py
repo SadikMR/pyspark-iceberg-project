@@ -1,34 +1,27 @@
 """
-SparkSession factory.
+Spark session factory.
 """
-
-from __future__ import annotations
 
 from pyspark.sql import SparkSession
 
-from config.settings import settings
-from src.core.logger import get_logger
-
-logger = get_logger(__name__)
+from config import settings
 
 
 class SparkSessionFactory:
-    """Factory for creating a SparkSession."""
+    """Creates the local SparkSession."""
 
     @staticmethod
     def create() -> SparkSession:
-
-        logger.info("Creating SparkSession...")
-
         spark = (
             SparkSession.builder
-            .appName(settings.app_name)
-            .master("local[*]")
+            .appName(settings.APP_NAME)
+            .master(settings.MASTER)
+            .config("spark.driver.memory", settings.DRIVER_MEMORY)
+            .config("spark.executor.memory", settings.EXECUTOR_MEMORY)
+            .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+            .config("spark.sql.shuffle.partitions", settings.SHUFFLE_PARTITIONS)
+            .config("spark.sql.adaptive.enabled", "true")
             .getOrCreate()
         )
-
         spark.sparkContext.setLogLevel("WARN")
-
-        logger.info("SparkSession created successfully.")
-
         return spark

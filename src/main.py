@@ -2,44 +2,58 @@
 Application entry point.
 """
 
-from __future__ import annotations
+import os
 
-from config.settings import settings
+from config import settings
+
+# Driver memory is applied at JVM start, so set this before SparkSession.
+os.environ.setdefault(
+    "PYSPARK_SUBMIT_ARGS",
+    (
+        f"--driver-memory {settings.DRIVER_MEMORY} "
+        f"--executor-memory {settings.EXECUTOR_MEMORY} "
+        "pyspark-shell"
+    ),
+)
+
 from src.core.spark_session import SparkSessionFactory
 from src.readers.jsonl_reader import JsonlReader
-from src.services.booking.booking_transform_service import (
-    BookingTransformService,
-)
+from src.readers.mapping_reader import MappingReader
+from src.services.exchange_rates import ExchangeRateService
+from src.transforms.bookings import BookingTransformer
 
 
 def main() -> None:
-    """Run the booking transformation."""
-
     spark = SparkSessionFactory.create()
 
     try:
         reader = JsonlReader(spark)
-        transformer = BookingTransformService()
+        mapping_reader = MappingReader(spark)
+        exchange_rates = ExchangeRateService(spark)
+        transformer = BookingTransformer(exchange_rates)
 
-        dataframe = reader.read(
-            file_path=str(settings.paths.input_file),
-            updated_from="2026-08-01",
-            updated_to="2026-08-02",
+        status_map = mapping_reader.read(settings.STATUS_MAPPING)
+        device_map = mapping_reader.read(settings.DEVICE_MAPPING)
+        region_map = mapping_reader.read(settings.REGION_MAPPING)
+
+        df = reader.read(
+            settings.INPUT_FILE,
+            updated_from="2026-07-01",
+            updated_to="2026-07-31",
         )
-
-        dataframe = transformer.transform(dataframe)
+        df = transformer.transform(df, status_map, device_map, region_map)
 
         print("\n========== SCHEMA ==========")
-        dataframe.printSchema()
+        df.printSchema()
 
         print("\n========== COLUMNS ==========")
-        print(dataframe.columns)
+        print(df.columns)
 
         print("\n========== SAMPLE DATA ==========")
-        dataframe.show(20, truncate=False)
+        df.show(20, truncate=False)
 
         print("\n========== ROW COUNT ==========")
-        print(dataframe.count())
+        print(df.count())
 
     finally:
         spark.stop()
