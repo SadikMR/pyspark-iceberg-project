@@ -1,25 +1,8 @@
 """
 Booking ETL job.
-
-Industry Spark convention: runnable jobs live under src/jobs/.
-(Use "pipelines/" for orchestrators like Airflow — not for the Spark entrypoint.)
 """
 
-import os
-
 from config import settings
-
-# Driver memory + Iceberg jars must be available when the JVM starts.
-os.environ.setdefault(
-    "PYSPARK_SUBMIT_ARGS",
-    (
-        f"--driver-memory {settings.DRIVER_MEMORY} "
-        f"--executor-memory {settings.EXECUTOR_MEMORY} "
-        f"--packages {settings.ICEBERG_PACKAGE} "
-        "pyspark-shell"
-    ),
-)
-
 from src.core.spark_session import SparkSessionFactory
 from src.readers.jsonl_reader import JsonlReader
 from src.readers.mapping_reader import MappingReader
@@ -28,47 +11,52 @@ from src.transforms.bookings import BookingTransformer
 from src.writers.iceberg_writer import IcebergWriter
 
 
-def run() -> None:
-    """Read → transform → write Iceberg table."""
+class BookingEtlJob:
+    """Read bookings → transform → MERGE INTO Iceberg."""
 
-    spark = SparkSessionFactory.create()
+    def __init__(self, updated_from: str, updated_to: str) -> None:
+        self.updated_from = updated_from
+        self.updated_to = updated_to
 
-    try:
-        reader = JsonlReader(spark)
-        mapping_reader = MappingReader(spark)
-        exchange_rates = ExchangeRateService(spark)
-        transformer = BookingTransformer(exchange_rates)
-        writer = IcebergWriter(spark)
+    def run(self) -> None:
+        spark = SparkSessionFactory.create()
 
-        status_map = mapping_reader.read(settings.STATUS_MAPPING)
-        device_map = mapping_reader.read(settings.DEVICE_MAPPING)
-        region_map = mapping_reader.read(settings.REGION_MAPPING)
+        try:
+            reader = JsonlReader(spark)
+            mapping_reader = MappingReader(spark)
+            exchange_rates = ExchangeRateService(spark)
+            transformer = BookingTransformer(exchange_rates)
+            writer = IcebergWriter(spark)
 
-        df = reader.read(
-            settings.INPUT_FILE,
-            updated_from="2026-07-01",
-            updated_to="2026-07-31",
-        )
-        df = transformer.transform(df, status_map, device_map, region_map)
+            print(f"cron-name    = booking")
+            print(f"updated_from = {self.updated_from}")
+            print(f"updated_to   = {self.updated_to}")
 
-        writer.write(df)
+            df = reader.read(
+                settings.INPUT_FILE,
+                updated_from=self.updated_from,
+                updated_to=self.updated_to,
+            )
+            df = transformer.transform(
+                df,
+                mapping_reader.read(settings.STATUS_MAPPING),
+                mapping_reader.read(settings.DEVICE_MAPPING),
+                mapping_reader.read(settings.REGION_MAPPING),
+            )
+            writer.write(df)
 
-        print(f"\nMerged into Iceberg table: {settings.ICEBERG_FULL_TABLE_NAME}")
-        print(f"Location: {settings.WAREHOUSE_DIR}/{settings.ICEBERG_TABLE}")
+            print(f"\nMerged into Iceberg table: {settings.ICEBERG_FULL_TABLE_NAME}")
+            print(f"Location: {settings.WAREHOUSE_DIR}/{settings.ICEBERG_TABLE}")
 
-        result = spark.table(settings.ICEBERG_FULL_TABLE_NAME)
-        print("\n========== SCHEMA ==========")
-        result.printSchema()
+            result = spark.table(settings.ICEBERG_FULL_TABLE_NAME)
+            print("\n========== SCHEMA ==========")
+            result.printSchema()
 
-        print("\n========== SAMPLE DATA ==========")
-        result.show(20, truncate=False)
+            print("\n========== SAMPLE DATA ==========")
+            result.show(20, truncate=False)
 
-        print("\n========== ROW COUNT ==========")
-        print(result.count())
+            print("\n========== ROW COUNT ==========")
+            print(result.count())
 
-    finally:
-        spark.stop()
-
-
-if __name__ == "__main__":
-    run()
+        finally:
+            spark.stop()

@@ -23,19 +23,20 @@ Stay **simple and industry-standard**. Do not over-engineer.
 
 ```text
 config/settings.py           # constants (paths, memory, Iceberg catalog/table)
-src/jobs/booking_etl.py      # runnable Spark job entrypoint
+src/main.py                  # entrypoint — CLI + dispatch by --cron-name
+src/jobs/booking_etl.py      # booking job logic
 src/core/spark_session.py    # SparkSessionFactory + Iceberg catalog
 src/readers/                 # JsonlReader, MappingReader
 src/services/                # ExchangeRateService (FX)
 src/transforms/              # BookingTransformer
 src/writers/                 # IcebergWriter
 src/mappings/                # plain object JSON lookups
-src/main.py                  # thin alias to the job
 ```
 
 | Put here | Kind of code |
 |----------|----------------|
-| `src/jobs/` | Runnable Spark jobs (`python -m src.jobs...`) |
+| `src/main.py` | CLI args + start / dispatch by `--cron-name` |
+| `src/jobs/` | Job logic called from main |
 | `src/core/` | Spark session / shared runtime |
 | `src/readers/` | Read sources into DataFrames |
 | `src/services/` | HTTP / FX / external integrations |
@@ -43,7 +44,7 @@ src/main.py                  # thin alias to the job
 | `src/writers/` | Iceberg / other sinks |
 | `config/settings.py` | Paths and simple constants only |
 
-Use **`jobs/`** for Spark entrypoints. Reserve **`pipelines/`** for orchestrators (Airflow, etc.) if added later — do not put Spark job logic there.
+Use **`main.py`** as the only user entrypoint. Keep job logic under **`jobs/`**. Reserve **`pipelines/`** for orchestrators (Airflow, etc.) if added later.
 
 Mapping JSON files are plain objects (`{"m": "mobile"}`). `MappingReader` turns them into a DataFrame for joins.
 
@@ -55,9 +56,12 @@ Do **not** add unused config modules, DI frameworks, or factories-of-factories.
 
 ### Architecture
 
-- Stay **class-based**: `SparkSessionFactory`, `JsonlReader`, `MappingReader`, `ExchangeRateService`, `BookingTransformer`, `IcebergWriter`.
+- Stay **class-based** end to end:
+  - `Application` (CLI + dispatch)
+  - `BookingEtlJob`
+  - `SparkSessionFactory`, `JsonlReader`, `MappingReader`, `ExchangeRateService`, `BookingTransformer`, `IcebergWriter`
 - One clear responsibility per class.
-- Wire new pieces in `src/jobs/booking_etl.py` (not deep business logic in the job file).
+- `Application` dispatches by `--cron-name`; job classes live under `src/jobs/`.
 
 ### Spark / data
 
@@ -119,5 +123,9 @@ Do **not** add unused config modules, DI frameworks, or factories-of-factories.
 source .venv/bin/activate
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export PYTHONPATH=.
-python -m src.jobs.booking_etl
+
+python -m src.main \
+  --cron-name booking \
+  --updated_from 2026-07-12 \
+  --updated_to 2026-07-13
 ```

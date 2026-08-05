@@ -13,8 +13,9 @@ Local PySpark job that reads booking JSONL, transforms fields, converts revenue 
 
 | Name | When to use |
 |------|-------------|
-| **`src/jobs/`** | Spark entrypoints you `spark-submit` / `python -m` — **this project uses jobs** |
-| **`pipelines/`** | Orchestration (Airflow/Dagster DAGs) that *call* jobs — not the Spark code itself |
+| **`src/main.py`** | User entrypoint (`python -m src.main ...`) |
+| **`src/jobs/`** | Job logic dispatched by `--cron-name` |
+| **`pipelines/`** | Orchestration (Airflow DAGs) that call main — optional later |
 
 ## Project structure
 
@@ -22,21 +23,21 @@ Local PySpark job that reads booking JSONL, transforms fields, converts revenue 
 config/
   settings.py                 # paths, Spark memory, Iceberg catalog/table
 src/
+  main.py                     # entrypoint — CLI (--cron-name, dates) + dispatch
   jobs/
-    booking_etl.py            # runnable job (read → transform → write)
+    booking_etl.py            # booking job logic
   core/
     spark_session.py          # SparkSessionFactory + Iceberg catalog
   readers/
     jsonl_reader.py           # JsonlReader
-    mapping_reader.py         # MappingReader (object JSON → DataFrame)
+    mapping_reader.py         # MappingReader
   services/
     exchange_rates.py         # ExchangeRateService
   transforms/
     bookings.py               # BookingTransformer
   writers/
-    iceberg_writer.py         # IcebergWriter (Parquet via Iceberg)
+    iceberg_writer.py         # IcebergWriter
   mappings/                   # lookup JSON objects
-  main.py                     # thin alias → jobs.booking_etl
 data/
   raw/bookings.jsonl          # input
   warehouse/                  # Iceberg warehouse (Parquet + metadata)
@@ -49,17 +50,36 @@ AGENTS.md
 
 ```bash
 cd /path/to/pyspark-iceberg-project
-python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export PYTHONPATH=.
 
-python -m src.jobs.booking_etl
-# or
-./spark-submit.sh
+python -m src.main \
+  --cron-name booking \
+  --updated_from 2026-07-12 \
+  --updated_to 2026-07-13
 ```
+
+Or (industry style — Iceberg JAR via `spark-submit --packages`):
+
+```bash
+./spark-submit.sh \
+  --cron-name booking \
+  --updated_from 2026-07-12 \
+  --updated_to 2026-07-13
+```
+
+| Argument | Required | Example |
+|----------|----------|---------|
+| `--cron-name` | yes | `booking` |
+| `--updated_from` | yes | `2026-07-12` |
+| `--updated_to` | yes | `2026-07-13` |
+
+`src/main.py` starts everything and dispatches by `--cron-name`. Job logic lives in `src/jobs/`.
+
+**Iceberg JAR at runtime**
+- `./spark-submit.sh` → only `--packages` + memory (runtime needs); catalog/AQE/etc. stay in `SparkSessionFactory`
+- `python -m src.main` → same JAR via `PYSPARK_SUBMIT_ARGS --packages` in `main.py`
 
 First run may download the Iceberg Spark package from Maven (needs network).
 
