@@ -1,6 +1,6 @@
-# Booking ETL (PySpark)
+# Booking ETL (PySpark + Iceberg)
 
-Local PySpark job that reads booking JSONL, cleans and maps fields, converts revenue to USD, and prints results.
+Local PySpark job that reads booking JSONL, transforms fields, converts revenue to USD, and writes an **Iceberg** table (Parquet data files) under `data/warehouse/`.
 
 ## Docs
 
@@ -9,27 +9,40 @@ Local PySpark job that reads booking JSONL, cleans and maps fields, converts rev
 | [README.md](README.md) | Overview, structure, how to run, pipeline diagram |
 | [AGENTS.md](AGENTS.md) | **Rules for AI agents** — what to maintain and how |
 
+## Job vs pipeline?
+
+| Name | When to use |
+|------|-------------|
+| **`src/jobs/`** | Spark entrypoints you `spark-submit` / `python -m` — **this project uses jobs** |
+| **`pipelines/`** | Orchestration (Airflow/Dagster DAGs) that *call* jobs — not the Spark code itself |
+
 ## Project structure
 
 ```text
 config/
-  settings.py              # paths, app name, Spark memory settings
+  settings.py                 # paths, Spark memory, Iceberg catalog/table
 src/
-  main.py                  # entry point — wires classes and runs the job
+  jobs/
+    booking_etl.py            # runnable job (read → transform → write)
   core/
-    spark_session.py       # SparkSessionFactory
+    spark_session.py          # SparkSessionFactory + Iceberg catalog
   readers/
-    jsonl_reader.py        # JsonlReader — read bookings
-    mapping_reader.py      # MappingReader — object JSON → lookup DataFrame
+    jsonl_reader.py           # JsonlReader
+    mapping_reader.py         # MappingReader (object JSON → DataFrame)
   services/
-    exchange_rates.py      # ExchangeRateService — FX API + in-memory cache
+    exchange_rates.py         # ExchangeRateService
   transforms/
-    bookings.py            # BookingTransformer — column transforms + revenue_usd
-  mappings/                # small lookup JSON (status, device, region)
-data/raw/bookings.jsonl    # input
-spark-submit.sh            # convenience runner
+    bookings.py               # BookingTransformer
+  writers/
+    iceberg_writer.py         # IcebergWriter (Parquet via Iceberg)
+  mappings/                   # lookup JSON objects
+  main.py                     # thin alias → jobs.booking_etl
+data/
+  raw/bookings.jsonl          # input
+  warehouse/                  # Iceberg warehouse (Parquet + metadata)
+spark-submit.sh
 requirements.txt
-AGENTS.md                  # maintenance rules for AI agents
+AGENTS.md
 ```
 
 ## How to run
@@ -40,15 +53,36 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # Java 17+
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export PYTHONPATH=.
 
-python -m src.main
+python -m src.jobs.booking_etl
 # or
 ./spark-submit.sh
 ```
 
-Spark is configured for **4g** driver/executor memory in `config/settings.py` and `PYSPARK_SUBMIT_ARGS` in `src/main.py`.
+First run may download the Iceberg Spark package from Maven (needs network).
+
+> **Note:** `pyspark==4.1.3` is pinned so it matches `iceberg-spark-runtime-4.1_2.13`. PySpark 4.2 is not compatible with current Iceberg runtimes yet.
+
+## Iceberg table
+
+| Setting | Value |
+|---------|--------|
+| Catalog | `local` (Hadoop catalog) |
+| Warehouse path | `data/warehouse/bookings/` (no `default` namespace) |
+| Table | `local.bookings` |
+| Write | **MERGE INTO** on `transaction_id` |
+| Data format | **Parquet** |
+| Maintenance | `rewrite_data_files` + `expire_snapshots` (retain last 5) |
+
+`data/` is gitignored (raw + warehouse stay local).
+
+Read back:
+
+```python
+spark.table("local.bookings").show()
+```
 
 ---
 
@@ -56,7 +90,7 @@ Spark is configured for **4g** driver/executor memory in `config/settings.py` an
 
 ```mermaid
 flowchart TD
-  A[Start main] --> B[Create SparkSession]
+  A[Start job] --> B[Create SparkSession + Iceberg catalog]
   B --> C[JsonlReader reads bookings.jsonl]
   C --> D[BookingTransformer.transform]
   D --> E[Select / clean / map columns]
@@ -64,28 +98,25 @@ flowchart TD
   F --> G[ExchangeRateService]
   G --> H{Currency in cache?}
   H -->|yes| I[Use cached rate]
-  H -->|no| J[Call API once and save cache]
+  H -->|no| J[Call API once and cache in memory]
   I --> K[Join rates to bookings]
   J --> K
   K --> L[revenue_usd = revenue x rate]
-  L --> M[show / count]
+  L --> M[IcebergWriter MERGE INTO + expire snapshots]
+  M --> N[Parquet under data/warehouse/bookings]
+  N --> O[show / count from local.bookings]
 ```
 
 ---
 
-## DAG vs no DAG (for comparison)
+## DAG vs no DAG
 
-The **same** job code runs either way. Only orchestration changes.
+Same job either way: `python -m src.jobs.booking_etl`.
 
-| | Without DAG | With DAG (e.g. Airflow) |
-|--|-------------|-------------------------|
-| How | `python -m src.main` by hand | Scheduler runs the same command |
-| Business logic | In this repo | Unchanged |
-| FX API | Inside `ExchangeRateService` | Same, unless you split a “fetch rates” task |
-| Schedule / retries | Manual | Handled by the DAG |
-
-**Option A (current):** API inside the Spark job.  
-**Option B:** DAG task 1 fetches rates; task 2 runs Spark and only joins. Same `revenue_usd` math; different place for the HTTP call.
+| | Without DAG | With DAG |
+|--|-------------|----------|
+| How | Run the job yourself | Scheduler runs the same job module |
+| Logic | Unchanged | Unchanged |
 
 ---
 

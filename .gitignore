@@ -58,9 +58,9 @@ derby.log
 spark-events/
 
 # ==========================
-# Iceberg Warehouse
+# Data (raw + Iceberg warehouse)
 # ==========================
-data/warehouse/
+data/
 
 # If using another warehouse location
 warehouse/

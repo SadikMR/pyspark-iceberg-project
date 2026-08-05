@@ -13,5 +13,4 @@ fi
 source "$ROOT/.venv/bin/activate"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
-# Memory is set in src/main.py via PYSPARK_SUBMIT_ARGS + SparkSession config.
-exec python -m src.main
+exec python -m src.jobs.booking_etl

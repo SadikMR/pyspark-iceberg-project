@@ -1,6 +1,6 @@
 # AGENTS.md — codebase maintenance rules
 
-Instructions for **AI agents** (and humans) working on this PySpark booking ETL.
+Instructions for **AI agents** (and humans) working on this PySpark + Iceberg booking ETL.
 
 Pipeline overview and run steps live in [README.md](README.md). This file is the **source of truth for what to maintain and how**.
 
@@ -13,7 +13,7 @@ A small **class-based PySpark ETL**:
 1. Read booking JSONL  
 2. Transform / map columns  
 3. Add `revenue_usd` via FX API (in-memory cache)  
-4. Print schema / sample / count  
+4. Write **Iceberg** table `local.bookings` (Parquet under `data/warehouse/bookings/`) via **MERGE INTO**
 
 Stay **simple and industry-standard**. Do not over-engineer.
 
@@ -22,25 +22,30 @@ Stay **simple and industry-standard**. Do not over-engineer.
 ## Layout — keep this structure
 
 ```text
-config/settings.py           # constants only (paths, memory, app name)
-src/main.py                  # wire classes + run (no heavy logic)
-src/core/spark_session.py    # SparkSessionFactory
-src/readers/                 # input only (JsonlReader)
-src/services/                # external APIs / services (ExchangeRateService)
-src/transforms/              # DataFrame transforms (BookingTransformer)
-src/mappings/                # small JSON lookup tables
+config/settings.py           # constants (paths, memory, Iceberg catalog/table)
+src/jobs/booking_etl.py      # runnable Spark job entrypoint
+src/core/spark_session.py    # SparkSessionFactory + Iceberg catalog
+src/readers/                 # JsonlReader, MappingReader
+src/services/                # ExchangeRateService (FX)
+src/transforms/              # BookingTransformer
+src/writers/                 # IcebergWriter
+src/mappings/                # plain object JSON lookups
+src/main.py                  # thin alias to the job
 ```
 
 | Put here | Kind of code |
 |----------|----------------|
+| `src/jobs/` | Runnable Spark jobs (`python -m src.jobs...`) |
 | `src/core/` | Spark session / shared runtime |
-| `src/readers/` | Reading files or sources into DataFrames |
-| `src/services/` | HTTP, FX, other external integrations |
-| `src/transforms/` | Pure DataFrame business transforms |
+| `src/readers/` | Read sources into DataFrames |
+| `src/services/` | HTTP / FX / external integrations |
+| `src/transforms/` | DataFrame business transforms |
+| `src/writers/` | Iceberg / other sinks |
 | `config/settings.py` | Paths and simple constants only |
-| `src/main.py` | Orchestration only |
 
-Mapping JSON files are plain objects (`{"m": "mobile"}`), not `key`/`value` rows. `MappingReader` turns them into a DataFrame for joins.
+Use **`jobs/`** for Spark entrypoints. Reserve **`pipelines/`** for orchestrators (Airflow, etc.) if added later — do not put Spark job logic there.
+
+Mapping JSON files are plain objects (`{"m": "mobile"}`). `MappingReader` turns them into a DataFrame for joins.
 
 Do **not** add unused config modules, DI frameworks, or factories-of-factories.
 
@@ -50,33 +55,40 @@ Do **not** add unused config modules, DI frameworks, or factories-of-factories.
 
 ### Architecture
 
-- Stay **class-based**: `SparkSessionFactory`, `JsonlReader`, `ExchangeRateService`, `BookingTransformer`.
+- Stay **class-based**: `SparkSessionFactory`, `JsonlReader`, `MappingReader`, `ExchangeRateService`, `BookingTransformer`, `IcebergWriter`.
 - One clear responsibility per class.
-- Wire new pieces in `main.py` only.
+- Wire new pieces in `src/jobs/booking_etl.py` (not deep business logic in the job file).
 
 ### Spark / data
 
-- Prefer `import pyspark.sql.functions as F` and `import pyspark.sql.types as T` (aliases, not dozens of individual imports).
-- Dimension lookups = **DataFrames + `F.broadcast` join** (status, device, region, FX rates).
+- Prefer `import pyspark.sql.functions as F` and `import pyspark.sql.types as T`.
+- Dimension lookups = **DataFrames + `F.broadcast` join**.
 - Do **not** use `create_map` from Python dicts for lookups.
-- Do **not** call the FX API per row — once per distinct currency, then join.
+- Do **not** call the FX API per row.
 
 ### Exchange rates
 
-- Currencies come from **distinct `currency` values in the DataFrame** — never hardcode `["USD", "EUR", ...]`.
-- Cache rates in an **in-memory dict** on `ExchangeRateService` for the process lifetime.
-- No FX cache files unless the user explicitly asks.
+- Currencies from **distinct `currency` in the DataFrame** — never hardcode lists.
+- **In-memory** cache on `ExchangeRateService` only.
 - Keep **both** `revenue` and `revenue_usd`.
+
+### Iceberg
+
+- Table: `local.bookings` → files under `data/warehouse/bookings/` (no `default` namespace).
+- Writes use **MERGE INTO** on `transaction_id` (create table once if missing).
+- Default data format: **Parquet**; format-version 2.
+- After write: `rewrite_data_files` then `expire_snapshots(retain_last=5)`.
+- Writers stay small and simple in `src/writers/`.
+- Entire `data/` directory is gitignored.
 
 ### Transforms
 
-- Separate methods by concern (booking fields, user fields, label extract, status/device/region maps, casts, revenue USD).
-- Meaningful names only.
+- Separate methods by concern (booking fields, user fields, label extract, maps, casts, revenue USD).
 
 ### Config / Spark session
 
 - Session configs on the builder + `settings.py`.
-- Driver memory needs `PYSPARK_SUBMIT_ARGS` before JVM start (already in `main.py`) — do not remove that without a replacement.
+- Driver memory + Iceberg `--packages` via `PYSPARK_SUBMIT_ARGS` before JVM start (in the job module).
 
 ---
 
@@ -84,18 +96,18 @@ Do **not** add unused config modules, DI frameworks, or factories-of-factories.
 
 | Do | Don't |
 |----|--------|
-| Simple classes in the folders above | Abstract base-class hierarchies |
-| Broadcast joins for small maps | Per-row HTTP calls |
-| Constants in `settings.py` | Dead `spark_config` modules |
-| FX under `src/services/` | Bury FX only inside `main` |
-| Update README diagram if flow changes | Add Airflow/DAG code unless asked |
+| Jobs under `src/jobs/` | Spark entrypoint under a vague `pipelines/` folder |
+| Writers under `src/writers/` | Write Iceberg ad‑hoc only in the job file |
+| Broadcast joins for maps | Per-row HTTP calls |
+| Plain object mapping JSON | Force `key`/`value` fields in JSON files |
+| Update README diagram if flow changes | Add Airflow code unless asked |
 
 ---
 
 ## When you change the pipeline
 
 1. Prefer extending an existing class, or add one small class in the right folder.  
-2. Wire it in `src/main.py`.  
+2. Wire it in `src/jobs/booking_etl.py`.  
 3. Update the mermaid diagram in [README.md](README.md) if the flow changes.  
 4. Keep this `AGENTS.md` up to date if maintenance rules change.
 
@@ -107,5 +119,5 @@ Do **not** add unused config modules, DI frameworks, or factories-of-factories.
 source .venv/bin/activate
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export PYTHONPATH=.
-python -m src.main
+python -m src.jobs.booking_etl
 ```
