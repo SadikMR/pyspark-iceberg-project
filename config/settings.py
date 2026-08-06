@@ -21,6 +21,7 @@ REGION_MAPPING = str(ROOT / "src" / "mappings" / "country_region.json")
 
 # Iceberg (Hadoop catalog) — table lives at data/warehouse/bookings (Parquet).
 WAREHOUSE_DIR = str(ROOT / "data" / "warehouse")
+SPARK_WAREHOUSE_DIR = "/tmp/spark-warehouse"
 ICEBERG_CATALOG = "local"
 ICEBERG_TABLE = "bookings"
 ICEBERG_PACKAGE = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0"

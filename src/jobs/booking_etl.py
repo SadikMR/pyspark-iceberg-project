@@ -7,6 +7,7 @@ from src.core.spark_session import SparkSessionFactory
 from src.readers.jsonl_reader import JsonlReader
 from src.readers.mapping_reader import MappingReader
 from src.services.exchange_rates import ExchangeRateService
+from src.services.exchange_rates_DAG_exec import ExchangeRateService as ExchangeRateServiceDAG
 from src.transforms.bookings import BookingTransformer
 from src.writers.iceberg_writer import IcebergWriter
 
@@ -25,6 +26,7 @@ class BookingEtlJob:
             reader = JsonlReader(spark)
             mapping_reader = MappingReader(spark)
             exchange_rates = ExchangeRateService(spark)
+            # exchange_rates = ExchangeRateServiceDAG()  # DAG implementation (executor API via UDF)
             transformer = BookingTransformer(exchange_rates)
             writer = IcebergWriter(spark)
 

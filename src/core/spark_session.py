@@ -23,6 +23,7 @@ class SparkSessionFactory:
             .config("spark.driver.memory", settings.DRIVER_MEMORY)
             .config("spark.executor.memory", settings.EXECUTOR_MEMORY)
             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+            .config("spark.sql.warehouse.dir", settings.SPARK_WAREHOUSE_DIR)
             .config("spark.sql.shuffle.partitions", settings.SHUFFLE_PARTITIONS)
             .config("spark.sql.adaptive.enabled", "true")
             .config("spark.jars.packages", settings.ICEBERG_PACKAGE)

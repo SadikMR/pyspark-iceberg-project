@@ -36,7 +36,12 @@ class BookingTransformer:
         df = self._map_device(df, device_map)
         df = self._map_country_region(df, region_map)
         df = self._cast_types(df)
+
+        # (driver API + broadcast join)
         return self._add_revenue_usd(df)
+
+        # DAG implementation (executor API via UDF)
+        # return self._add_revenue_usd_dag(df)
 
     def _booking_fields(self) -> list[Column]:
         return [
@@ -133,4 +138,18 @@ class BookingTransformer:
                 (F.col("revenue") * F.col("rate_to_usd")).cast(T.DecimalType(18, 2)),
             )
             .drop("rate_currency", "rate_to_usd")
+        )
+
+    def _add_revenue_usd_dag(self, df: DataFrame) -> DataFrame:
+        """Add revenue_usd using a UDF that calls the exchange-rate API during DAG execution."""
+
+        df = self.exchange_rates.add_rate_column(df)
+
+        return (
+            df.withColumn(
+                "revenue_usd",
+                (F.col("revenue") * F.col("rate_to_usd"))
+                .cast(T.DecimalType(18, 2))
+            )
+            .drop("rate_to_usd")
         )

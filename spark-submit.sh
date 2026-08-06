@@ -13,19 +13,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-if [[ -z "${JAVA_HOME:-}" ]]; then
-  JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
-  export JAVA_HOME
+if [[ -f "$ROOT/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/.venv/bin/activate"
+else
+  echo "Virtual environment not found at $ROOT/.venv" >&2
+  exit 1
 fi
 
-# shellcheck disable=SC1091
-source "$ROOT/.venv/bin/activate"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYSPARK_PYTHON="$ROOT/.venv/bin/python"
+export PYSPARK_DRIVER_PYTHON="$ROOT/.venv/bin/python"
 
-# Only what must be set before/at JVM start:
-#   --packages  → Iceberg runtime JAR
-#   --*-memory  → heap size
-exec spark-submit \
+SPARK_HOME="$($ROOT/.venv/bin/python - <<'PY'
+import os
+import pyspark
+print(os.path.dirname(os.path.realpath(pyspark.__file__)))
+PY
+)"
+export SPARK_HOME
+
+exec "$ROOT/.venv/bin/spark-submit" \
   --master "local[*]" \
   --driver-memory 4g \
   --executor-memory 4g \
