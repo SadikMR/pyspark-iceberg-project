@@ -30,6 +30,7 @@ src/readers/                 # JsonlReader, MappingReader
 src/services/                # ExchangeRateService (FX)
 src/transforms/              # BookingTransformer
 src/writers/                 # IcebergWriter
+src/utils/                   # shared helpers (e.g. @timed runtime)
 src/mappings/                # plain object JSON lookups
 ```
 

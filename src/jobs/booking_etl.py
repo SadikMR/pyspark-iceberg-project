@@ -25,8 +25,12 @@ class BookingEtlJob:
         try:
             reader = JsonlReader(spark)
             mapping_reader = MappingReader(spark)
+
+            # Flip these (and the return in BookingTransformer.transform) to compare FX modes.
+            # Compare the single [runtime] fx_api line between runs.
             exchange_rates = ExchangeRateService(spark)
-            # exchange_rates = ExchangeRateServiceDAG()  # DAG implementation (executor API via UDF)
+            # exchange_rates = ExchangeRateServiceDAG()
+
             transformer = BookingTransformer(exchange_rates)
             writer = IcebergWriter(spark)
 

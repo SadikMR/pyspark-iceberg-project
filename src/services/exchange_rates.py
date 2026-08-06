@@ -6,6 +6,8 @@ import requests
 from pyspark.sql import DataFrame
 from pyspark.sql import SparkSession
 
+from src.utils.timing import timed
+
 
 class ExchangeRateService:
     """Get USD rates for currencies found in the data."""
@@ -22,8 +24,14 @@ class ExchangeRateService:
             for row in bookings.select("currency").distinct().collect()
             if row["currency"]
         ]
-        rows = [(currency, self.get_rate(currency)) for currency in currencies]
+        rows = self._fetch_rates_from_api(currencies)
         return self.spark.createDataFrame(rows, ["currency", "rate_to_usd"])
+
+    @timed("fx_api")
+    def _fetch_rates_from_api(self, currencies: list[str]) -> list[tuple[str, float]]:
+        """HTTP only — compare this timer to DAG fx_api."""
+
+        return [(currency, self.get_rate(currency)) for currency in currencies]
 
     def get_rate(self, currency: str) -> float:
         """How many USD for 1 unit of this currency."""

@@ -12,13 +12,20 @@ import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
 
+from src.utils.timing import timed
+
 
 class ExchangeRateService:
     """Get USD exchange rates using a Spark UDF."""
 
     @staticmethod
+    @timed("fx_api")
     def add_rate_column(df: DataFrame) -> DataFrame:
-        """Add a rate_to_usd column by calling the exchange-rate API."""
+        """
+        Add rate_to_usd via UDF and force evaluation so fx_api includes HTTP.
+
+        Result is cached so the later Iceberg write does not re-call the API.
+        """
 
         cache: dict[str, float] = {"USD": 1.0}
 
@@ -38,7 +45,7 @@ class ExchangeRateService:
             cache[currency] = rate
             return rate
 
-        return df.withColumn(
-            "rate_to_usd",
-            get_rate(F.col("currency")),
-        )
+        out = df.withColumn("rate_to_usd", get_rate(F.col("currency")))
+        out = out.cache()
+        out.select("rate_to_usd").count()  # force UDF / HTTP now
+        return out
