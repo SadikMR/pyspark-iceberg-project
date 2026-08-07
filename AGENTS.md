@@ -129,4 +129,7 @@ python -m src.main \
   --cron-name booking \
   --updated_from 2026-07-12 \
   --updated_to 2026-07-13
+
+python -m src.main \
+  --cron-name migrate_postgres
 ```

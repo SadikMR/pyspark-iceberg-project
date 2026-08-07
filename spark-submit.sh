@@ -7,6 +7,9 @@
 #     --cron-name booking \
 #     --updated_from 2026-07-12 \
 #     --updated_to 2026-07-13
+#
+#   ./spark-submit.sh \
+#     --cron-name migrate_postgres
 
 set -euo pipefail
 

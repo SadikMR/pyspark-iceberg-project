@@ -60,6 +60,11 @@ python -m src.main \
   --updated_to 2026-07-13
 ```
 
+```bash
+python -m src.main \
+  --cron-name migrate_postgres
+```
+
 Or (industry style — Iceberg JAR via `spark-submit --packages`):
 
 ```bash
@@ -69,11 +74,16 @@ Or (industry style — Iceberg JAR via `spark-submit --packages`):
   --updated_to 2026-07-13
 ```
 
+```bash
+./spark-submit.sh \
+  --cron-name migrate_postgres
+```
+
 | Argument | Required | Example |
 |----------|----------|---------|
-| `--cron-name` | yes | `booking` |
-| `--updated_from` | yes | `2026-07-12` |
-| `--updated_to` | yes | `2026-07-13` |
+| `--cron-name` | yes | `booking` or `migrate_postgres` |
+| `--updated_from` | yes for booking | `2026-07-12` |
+| `--updated_to` | yes for booking | `2026-07-13` |
 
 `src/main.py` starts everything and dispatches by `--cron-name`. Job logic lives in `src/jobs/`.
 

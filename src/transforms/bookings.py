@@ -36,9 +36,9 @@ class BookingTransformer:
         df = self._map_device(df, device_map)
         df = self._map_country_region(df, region_map)
         df = self._cast_types(df)
+        df = self._add_revenue_usd(df)
 
-        # (driver API + broadcast join)
-        return self._add_revenue_usd(df)
+        return self._finalize_columns(df)
 
         # DAG implementation (executor API via UDF)
         # return self._add_revenue_usd_dag(df)
@@ -139,6 +139,27 @@ class BookingTransformer:
             )
             .drop("rate_currency", "rate_to_usd")
         )
+
+    def _finalize_columns(self, df: DataFrame) -> DataFrame:
+        """Return the canonical booking columns in a stable order."""
+        target_columns = [
+            "transaction_id",
+            "conversion_key",
+            "property_id",
+            "status",
+            "currency",
+            "check_in_date",
+            "check_out_date",
+            "revenue",
+            "travel_purpose",
+            "country_code",
+            "site_key",
+            "referral_property_id",
+            "device",
+            "region",
+            "revenue_usd",
+        ]
+        return df.select(*target_columns)
 
     def _add_revenue_usd_dag(self, df: DataFrame) -> DataFrame:
         """Add revenue_usd using a UDF that calls the exchange-rate API during DAG execution."""

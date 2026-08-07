@@ -27,4 +27,6 @@ ICEBERG_TABLE = "bookings"
 ICEBERG_PACKAGE = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0"
 ICEBERG_FULL_TABLE_NAME = f"{ICEBERG_CATALOG}.{ICEBERG_TABLE}"
 ICEBERG_MERGE_KEY = "transaction_id"
-ICEBERG_SNAPSHOT_RETAIN_LAST = 5
+ICEBERG_SNAPSHOT_RETAIN_LAST = 1
+
+POSTGRES_URL = "postgresql+psycopg://postgres:postgres@localhost:5434/iceberg_db"
