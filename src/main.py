@@ -12,6 +12,7 @@ import os
 from config import settings
 from src.jobs.booking_etl import BookingEtlJob
 from src.jobs.migrate_postgres import MigratePostgresJob
+from src.jobs.iceberg_maintenance import IcebergMaintenanceJob
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,6 +91,11 @@ class Application:
         if self._cron_name == "migrate_postgres":
             MigratePostgresJob().run()
             return
+
+        if self._cron_name == "maintain-iceberg":
+            IcebergMaintenanceJob().run()
+            return
+
 
         raise ValueError(f"Unsupported cron-name: {self._cron_name}")
 

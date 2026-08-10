@@ -30,5 +30,7 @@ ICEBERG_MERGE_KEY = "transaction_id"
 ICEBERG_SNAPSHOT_RETAIN_LAST = 5
 
 # Postgres (docker-compose maps host 5434 → container 5432)
-POSTGRES_URL = "postgresql://postgres:postgres@localhost:5434/iceberg_db"
+POSTGRES_URL = (
+    "postgresql+psycopg://postgres:postgres@localhost:5434/iceberg_db"
+)
 MIGRATE_PIPELINE_NAME = "bookings_iceberg_to_pg"
