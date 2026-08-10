@@ -1,37 +1,60 @@
-"""Track migrated Iceberg snapshots in PostgreSQL."""
+"""Track successfully migrated Iceberg snapshots."""
 
 from __future__ import annotations
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import sessionmaker
+from pyspark.sql import SparkSession
 
-from src.db.models import MigrationTracking
+from config import settings
 
 
 class MigrationTracker:
-    """Manage the migration snapshot watermark."""
+    """Manage the Iceberg migration tracking table."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, spark: SparkSession) -> None:
+        self._spark = spark
+        self._table = (
+            f"{settings.ICEBERG_CATALOG}.migration_tracking"
+        )
+
+    def create_table_if_not_exists(self) -> None:
+        """Create the migration tracking table if needed."""
+
+        self._spark.sql(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._table} (
+                snapshot_id BIGINT,
+                processed_at TIMESTAMP
+            )
+            USING iceberg
+            """
+        )
 
     def get_last_snapshot_id(self) -> int | None:
         """Return the most recently processed snapshot ID."""
 
-        with self._session_factory() as session:
-            return session.scalar(
-                select(MigrationTracking.snapshot_id)
-                .order_by(MigrationTracking.processed_at.desc())
-                .limit(1)
-            )
+        result = self._spark.sql(
+            f"""
+            SELECT snapshot_id
+            FROM {self._table}
+            ORDER BY processed_at DESC
+            LIMIT 1
+            """
+        ).first()
+
+        if result is None:
+            return None
+
+        return int(result["snapshot_id"])
 
     def save_snapshot(self, snapshot_id: int) -> None:
         """Record a successfully migrated snapshot."""
 
-        statement = insert(MigrationTracking).values(
-            snapshot_id=snapshot_id,
+        self._spark.sql(
+            f"""
+            INSERT INTO {self._table}
+            VALUES (
+                {snapshot_id},
+                current_timestamp()
+            )
+            """
         )
-
-        with self._session_factory.begin() as session:
-            session.execute(statement)

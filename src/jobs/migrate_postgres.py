@@ -46,7 +46,8 @@ class MigratePostgresJob:
                 self._iceberg_table_name,
             )
             postgres_writer = PostgresWriter(session_factory)
-            migration_tracker = MigrationTracker(session_factory)
+            migration_tracker = MigrationTracker(spark)
+            migration_tracker.create_table_if_not_exists()
 
             iceberg_snapshot_id = (
                 iceberg_reader.get_latest_snapshot_id()

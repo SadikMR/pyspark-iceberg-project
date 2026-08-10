@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 from datetime import date
-from datetime import datetime
 from decimal import Decimal
-
-from sqlalchemy import BigInteger, Integer
 from sqlalchemy import Date
 from sqlalchemy import Numeric
 from sqlalchemy import Text
-from sqlalchemy import TIMESTAMP
-from sqlalchemy import func
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 
@@ -44,20 +39,4 @@ class Booking(Base):
     region: Mapped[str | None] = mapped_column(Text)
     revenue_usd: Mapped[Decimal | None] = mapped_column(
         Numeric(18, 2),
-    )
-
-
-class MigrationTracking(Base):
-    """Track successfully migrated Iceberg snapshots."""
-
-    __tablename__ = "migration_tracking"
-
-    snapshot_id: Mapped[int] = mapped_column(
-        BigInteger,
-        primary_key=True,
-    )
-    processed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=func.now(),
-        nullable=False,
     )
