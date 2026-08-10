@@ -1,5 +1,8 @@
 """
 Application entry point.
+
+  python -m src.main --cron-name booking --updated_from YYYY-MM-DD --updated_to YYYY-MM-DD
+  python -m src.main --cron-name migrate_postgres
 """
 
 import argparse
@@ -8,11 +11,12 @@ import os
 
 from config import settings
 from src.jobs.booking_etl import BookingEtlJob
-from src.jobs.migrate_postgres_job import MigratePostgresJob
+from src.jobs.migrate_postgres import MigratePostgresJob
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(levelname)s:%(name)s:%(message)s",
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 logger = logging.getLogger(__name__)
@@ -29,7 +33,7 @@ os.environ.setdefault(
 
 
 class Application:
-    """Application entry point."""
+    """CLI entrypoint — dispatch by --cron-name."""
 
     def __init__(
         self,
@@ -43,10 +47,7 @@ class Application:
 
     @classmethod
     def from_cli(cls) -> "Application":
-        """Create an application from CLI arguments."""
-
         args = cls._parse_args()
-
         return cls(
             cron_name=args.cron_name,
             updated_from=args.updated_from,
@@ -55,64 +56,42 @@ class Application:
 
     @staticmethod
     def _parse_args() -> argparse.Namespace:
-        """Parse command-line arguments."""
-
-        parser = argparse.ArgumentParser(
-            description="Run ETL jobs.",
-        )
-
+        parser = argparse.ArgumentParser(description="Run an ETL cron job")
         parser.add_argument(
             "--cron-name",
             required=True,
-            choices=[
-                "booking",
-                "migrate_postgres",
-            ],
+            choices=["booking", "migrate_postgres"],
+            help="booking = transform JSONL → Iceberg; migrate_postgres = Iceberg → Postgres",
         )
-
-        parser.add_argument("--updated_from")
-        parser.add_argument("--updated_to")
-
+        parser.add_argument(
+            "--updated_from",
+            help="Required for booking (YYYY-MM-DD)",
+        )
+        parser.add_argument(
+            "--updated_to",
+            help="Required for booking (YYYY-MM-DD)",
+        )
         return parser.parse_args()
 
     def run(self) -> None:
-        """Run the selected job."""
-
-        logger.info(
-            "Starting '%s' job.",
-            self._cron_name,
-        )
+        logger.info("Starting cron-name=%s", self._cron_name)
 
         if self._cron_name == "booking":
-            self._run_booking()
+            if not self._updated_from or not self._updated_to:
+                raise ValueError(
+                    "--updated_from and --updated_to are required for booking"
+                )
+            BookingEtlJob(
+                updated_from=self._updated_from,
+                updated_to=self._updated_to,
+            ).run()
             return
 
         if self._cron_name == "migrate_postgres":
-            self._run_migration()
+            MigratePostgresJob().run()
             return
 
-        raise ValueError(
-            f"Unsupported cron job: {self._cron_name}",
-        )
-
-    def _run_booking(self) -> None:
-        """Run the booking ETL job."""
-
-        if self._updated_from is None or self._updated_to is None:
-            raise ValueError(
-                "--updated_from and --updated_to are required.",
-            )
-
-        BookingEtlJob(
-            updated_from=self._updated_from,
-            updated_to=self._updated_to,
-        ).run()
-
-    @staticmethod
-    def _run_migration() -> None:
-        """Run the PostgreSQL migration job."""
-
-        MigratePostgresJob().run()
+        raise ValueError(f"Unsupported cron-name: {self._cron_name}")
 
 
 if __name__ == "__main__":

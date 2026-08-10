@@ -1,155 +1,172 @@
-# Booking ETL (PySpark + Iceberg)
+# Booking ETL (PySpark + Iceberg → Postgres)
 
-Local PySpark job that reads booking JSONL, transforms fields, converts revenue to USD, and writes an **Iceberg** table (Parquet data files) under `data/warehouse/`.
+Two cron jobs:
 
-## Docs
+1. **`booking`** — read JSONL by date → transform → MERGE INTO Iceberg  
+2. **`migrate_postgres`** — sync Iceberg → PostgreSQL using a snapshot tracking table  
 
-| File | Purpose |
-|------|---------|
-| [README.md](README.md) | Overview, structure, how to run, pipeline diagram |
-| [AGENTS.md](AGENTS.md) | **Rules for AI agents** — what to maintain and how |
+## Prerequisites
 
-## Job vs pipeline?
+- Python 3.12+ with project venv (`.venv`)
+- Java 17
+- Docker (for local Postgres)
 
-| Name | When to use |
-|------|-------------|
-| **`src/main.py`** | User entrypoint (`python -m src.main ...`) |
-| **`src/jobs/`** | Job logic dispatched by `--cron-name` |
-| **`pipelines/`** | Orchestration (Airflow DAGs) that call main — optional later |
+```bash
+cd /path/to/pyspark-iceberg-project
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ## Project structure
 
 ```text
-config/
-  settings.py                 # paths, Spark memory, Iceberg catalog/table
-src/
-  main.py                     # entrypoint — CLI (--cron-name, dates) + dispatch
-  jobs/
-    booking_etl.py            # booking job logic
-  core/
-    spark_session.py          # SparkSessionFactory + Iceberg catalog
-  readers/
-    jsonl_reader.py           # JsonlReader
-    mapping_reader.py         # MappingReader
-  services/
-    exchange_rates.py         # ExchangeRateService
-  transforms/
-    bookings.py               # BookingTransformer
-  writers/
-    iceberg_writer.py         # IcebergWriter
-  mappings/                   # lookup JSON objects
-data/
-  raw/bookings.jsonl          # input
-  warehouse/                  # Iceberg warehouse (Parquet + metadata)
+config/settings.py
+src/main.py                      # CLI entry (--cron-name)
+src/jobs/
+  booking_etl.py                 # booking cron
+  migrate_postgres.py            # migrate_postgres cron
+src/core/spark_session.py
+src/readers/                     # Jsonl, Mapping, Iceberg
+src/services/exchange_rates.py
+src/transforms/bookings.py
+src/writers/
+  iceberg_writer.py
+  postgres_writer.py             # schema + tracking + upsert
+src/mappings/
+data/raw/bookings.jsonl          # input (gitignored)
+data/warehouse/                  # Iceberg warehouse (gitignored)
+docker-compose.yml               # Postgres on localhost:5434
 spark-submit.sh
-requirements.txt
-AGENTS.md
 ```
 
-## How to run
+## Setup (once)
 
 ```bash
-cd /path/to/pyspark-iceberg-project
+source .venv/bin/activate
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+export PYTHONPATH=.
+
+# Start Postgres (host port 5434 → container 5432)
+docker compose up -d
+docker compose ps
+```
+
+Postgres connection (from `config/settings.py`):
+
+```text
+postgresql://postgres:postgres@localhost:5434/iceberg_db
+```
+
+## Commands
+
+Preferred (sets Iceberg JAR + memory via `spark-submit`):
+
+### 1) Booking — transform one date window into Iceberg
+
+```bash
+./spark-submit.sh \
+  --cron-name booking \
+  --updated_from 2026-05-07 \
+  --updated_to 2026-05-07
+```
+
+Dates are inclusive (`YYYY-MM-DD`). Use a 1-day window for a quick test.
+
+### 2) Migrate — Iceberg → Postgres
+
+```bash
+./spark-submit.sh --cron-name migrate_postgres
+```
+
+No date args. Compares Iceberg latest snapshot to `migration_tracking`; upserts if needed.
+
+### Optional: run via Python module
+
+Same jobs (JAR/memory come from `PYSPARK_SUBMIT_ARGS` in `src/main.py`):
+
+```bash
 source .venv/bin/activate
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export PYTHONPATH=.
 
 python -m src.main \
   --cron-name booking \
-  --updated_from 2026-07-12 \
-  --updated_to 2026-07-13
+  --updated_from 2026-05-07 \
+  --updated_to 2026-05-07
+
+python -m src.main --cron-name migrate_postgres
 ```
+
+## CLI arguments
+
+| Argument | Required | Used by | Example |
+|----------|----------|---------|---------|
+| `--cron-name` | yes | both | `booking` or `migrate_postgres` |
+| `--updated_from` | yes for `booking` | booking | `2026-05-07` |
+| `--updated_to` | yes for `booking` | booking | `2026-05-07` |
+
+## Typical flow
 
 ```bash
-python -m src.main \
-  --cron-name migrate_postgres
+# Day 1 window → Iceberg
+./spark-submit.sh --cron-name booking --updated_from 2026-05-07 --updated_to 2026-05-07
+
+# Sync to Postgres
+./spark-submit.sh --cron-name migrate_postgres
+
+# Later: another day → Iceberg
+./spark-submit.sh --cron-name booking --updated_from 2026-05-08 --updated_to 2026-05-08
+
+# Sync again (upserts current Iceberg state; updates tracking)
+./spark-submit.sh --cron-name migrate_postgres
+
+# Run migrate again with no new booking → skip
+./spark-submit.sh --cron-name migrate_postgres
 ```
 
-Or (industry style — Iceberg JAR via `spark-submit --packages`):
+## migrate_postgres behavior
 
-```bash
-./spark-submit.sh \
-  --cron-name booking \
-  --updated_from 2026-07-12 \
-  --updated_to 2026-07-13
-```
+Table `migration_tracking` stores the last Iceberg `snapshot_id` applied to Postgres.
 
-```bash
-./spark-submit.sh \
-  --cron-name migrate_postgres
-```
+| Tracking | Iceberg latest | Action |
+|----------|----------------|--------|
+| no row | any | full upsert of current table |
+| same as latest | — | skip |
+| different | newer | upsert current table, then save latest |
 
-| Argument | Required | Example |
-|----------|----------|---------|
-| `--cron-name` | yes | `booking` or `migrate_postgres` |
-| `--updated_from` | yes for booking | `2026-07-12` |
-| `--updated_to` | yes for booking | `2026-07-13` |
-
-`src/main.py` starts everything and dispatches by `--cron-name`. Job logic lives in `src/jobs/`.
-
-**Iceberg JAR at runtime**
-- `./spark-submit.sh` → only `--packages` + memory (runtime needs); catalog/AQE/etc. stay in `SparkSessionFactory`
-- `python -m src.main` → same JAR via `PYSPARK_SUBMIT_ARGS --packages` in `main.py`
-
-First run may download the Iceberg Spark package from Maven (needs network).
-
-> **Note:** `pyspark==4.1.3` is pinned so it matches `iceberg-spark-runtime-4.1_2.13`. PySpark 4.2 is not compatible with current Iceberg runtimes yet.
+- Upsert key: `transaction_id` (`ON CONFLICT DO UPDATE`)
+- Watermark updates only after a successful upsert + commit
 
 ## Iceberg table
 
 | Setting | Value |
 |---------|--------|
-| Catalog | `local` (Hadoop catalog) |
-| Warehouse path | `data/warehouse/bookings/` (no `default` namespace) |
-| Table | `local.bookings` |
-| Write | **MERGE INTO** on `transaction_id` |
-| Data format | **Parquet** |
-| Maintenance | `rewrite_data_files` + `expire_snapshots` (retain last 5) |
+| Catalog / table | `local.bookings` |
+| Warehouse | `data/warehouse/bookings/` |
+| Write | MERGE INTO on `transaction_id` |
+| Format | Parquet, format-version 2 |
 
-`data/` is gitignored (raw + warehouse stay local).
-
-Read back:
-
-```python
-spark.table("local.bookings").show()
-```
-
----
-
-## Pipeline at a glance
+## Pipeline
 
 ```mermaid
 flowchart TD
-  A[Start job] --> B[Create SparkSession + Iceberg catalog]
-  B --> C[JsonlReader reads bookings.jsonl]
-  C --> D[BookingTransformer.transform]
-  D --> E[Select / clean / map columns]
-  E --> F[Add revenue_usd]
-  F --> G[ExchangeRateService]
-  G --> H{Currency in cache?}
-  H -->|yes| I[Use cached rate]
-  H -->|no| J[Call API once and cache in memory]
-  I --> K[Join rates to bookings]
-  J --> K
-  K --> L[revenue_usd = revenue x rate]
-  L --> M[IcebergWriter MERGE INTO + expire snapshots]
-  M --> N[Parquet under data/warehouse/bookings]
-  N --> O[show / count from local.bookings]
+  A[booking cron] --> B[JSONL by date]
+  B --> C[transform + FX]
+  C --> D[Iceberg MERGE INTO]
+  D --> E[migrate_postgres cron]
+  E --> F{tracking vs Iceberg snapshot}
+  F -->|none or changed| G[upsert Postgres bookings]
+  G --> H[update migration_tracking]
+  F -->|same| I[skip]
 ```
 
----
+## Notes
 
-## DAG vs no DAG
+- First Spark run may download the Iceberg package from Maven (needs network).
+- `pyspark==4.1.3` matches `iceberg-spark-runtime-4.1_2.13`.
+- `data/` is gitignored (raw input + warehouse stay local).
 
-Same job either way: `python -m src.jobs.booking_etl`.
-
-| | Without DAG | With DAG |
-|--|-------------|----------|
-| How | Run the job yourself | Scheduler runs the same job module |
-| Logic | Unchanged | Unchanged |
-
----
-
-## Maintaining this project
+## Maintaining
 
 Follow **[AGENTS.md](AGENTS.md)**.
